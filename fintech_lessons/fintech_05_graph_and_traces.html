@@ -65,6 +65,8 @@ h1 { font-family: var(--font-display); font-weight: 600; font-size: 28px; margin
 li.new { background: var(--accent-soft); }
 .tag { font: 600 10px var(--font-body); letter-spacing: 0.5px; border-radius: 3px; padding: 1px 4px; margin-left: 6px; vertical-align: 1px; color: #fff; }
 li.new .tag { background: var(--accent); }
+.tag.run { background: var(--wait); }
+.sent { font: 13px var(--font-mono); color: var(--wait); border-left: 3px solid var(--wait); padding: 4px 0 4px 10px; }
 .controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .btn { font: 600 14px var(--font-body); color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 7px; padding: 8px 16px; cursor: pointer; }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
@@ -88,6 +90,7 @@ li.new .tag { background: var(--accent); }
 .edge { fill: none; stroke: var(--line); stroke-width: 2; marker-end: url(#arrow); transition: stroke 0.25s; }
 .edge.lit { stroke: var(--accent); stroke-width: 2.6; marker-end: url(#arrow-lit); }
 .edge.int { stroke-dasharray: 6 5; }
+.edge.dotted { stroke-dasharray: 2 5; stroke-linecap: round; stroke-width: 2.5; }
 .edge.int.lit { stroke: var(--wait); marker-end: url(#arrow-wait); }
 .elabel { fill: var(--muted); font: 11px var(--font-mono); text-anchor: middle; }
 .decision rect { fill: var(--accent-soft); stroke: var(--accent); }
@@ -105,7 +108,7 @@ li.new .tag { background: var(--accent); }
   <header>
     <div>
       <h1>SecureBank Request Flow and its LangSmith Trace</h1>
-      <p class="sub">Follow one question from START to END. On the right: what LangSmith has recorded so far. Sample values.</p>
+      <p class="sub">Follow one question from START to END. Each step is sent to LangSmith while the graph runs, not at the end. Sample values.</p>
     </div>
     <div class="tabs" role="tablist" aria-label="Scenario" id="tabs"></div>
   </header>
@@ -119,7 +122,7 @@ li.new .tag { background: var(--accent); }
           <marker id="arrow-wait" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#c46a12"/></marker>
         </defs>
 
-        <rect class="frame" x="318" y="30" width="770" height="450" rx="10"/>
+        <rect class="frame" x="318" y="30" width="770" height="442" rx="10"/>
         <text class="frame-label" x="336" y="54">ONE TRACE = ONE app.invoke()   (LANGCHAIN_TRACING_V2=true)</text>
 
         <!-- edges -->
@@ -136,9 +139,12 @@ li.new .tag { background: var(--accent); }
         <path class="edge" id="e-acc_end" d="M1000,295 L1044,295"/>
         <path class="edge" id="e-esc_end" d="M1000,415 C1036,415 1046,360 1050,312"/>
         <path class="edge" id="e-end_cust" d="M1080,295 L1094,295 L1094,595 L80,595 L80,335"/>
-        <path class="edge int" id="e-upload" d="M1066,313 L1066,530 L686,530"/>
+        <path class="edge int" id="e-upload" d="M1066,313 L1066,543 L686,543"/>
+        <path class="edge int dotted" id="e-send" d="M542,472 L542,512"/>
         <text class="elabel" x="586" y="588">result goes back to the caller</text>
-        <text class="elabel" x="878" y="522">runs uploaded in a background thread</text>
+        <text class="elabel" x="878" y="535">last "finished" update</text>
+        <text class="elabel" x="600" y="490" style="text-anchor:start">every step is sent live, as it starts and ends</text>
+        <text class="elabel" x="600" y="504" style="text-anchor:start">(background thread, not at the end)</text>
 
         <!-- caller side -->
         <g class="g-node" id="n-customer"><rect x="20" y="255" width="120" height="80" rx="8"/><text x="80" y="290">Customer</text><text class="s" x="80" y="308">asks a question</text></g>
@@ -167,7 +173,7 @@ li.new .tag { background: var(--accent); }
         <g class="g-node" id="n-end"><circle cx="1062" cy="295" r="18"/><text x="1062" y="299" style="font-size:9.5px">END</text></g>
 
         <!-- LangSmith -->
-        <g class="g-node ls" id="n-ls"><rect x="400" y="500" width="284" height="62" rx="8"/><text x="542" y="526">LangSmith</text><text class="m" x="542" y="546">project: fintech-support-agent</text></g>
+        <g class="g-node ls" id="n-ls"><rect x="400" y="515" width="284" height="56" rx="8"/><text x="542" y="539">LangSmith</text><text class="m" x="542" y="558">project: fintech-support-agent</text></g>
 
         <g class="packets"></g>
       </svg>
@@ -177,7 +183,8 @@ li.new .tag { background: var(--accent); }
       <div class="stepno" id="stepno"></div>
       <h2 id="title"></h2>
       <p id="text"></p>
-      <div class="panel trace"><h3>LangSmith trace</h3><ul id="trace"></ul><div class="missing" id="missing"></div></div>
+      <div class="sent" id="sent"></div>
+      <div class="panel trace"><h3>LangSmith trace (live)</h3><ul id="trace"></ul><div class="missing" id="missing"></div></div>
     </section>
   </div>
 
@@ -209,35 +216,48 @@ function llmChain(out) {   // prompt | llm | StrOutputParser, as LangSmith shows
   ];
 }
 
+// Each step sends its start/finish events to LangSmith right away (background thread).
+function SEND(label) { return { e: "send", d: 600, label: label, wait: true }; }
+
 // One scenario = 5 steps. Each step adds runs to the trace; the new ones are tagged NEW.
 function scenario(cfg) {
   const ag = AGENTS[cfg.agent];
   const others = Object.keys(AGENTS).filter(a => a !== cfg.agent);
   const parts = [
     { title: "The customer asks", text: "ask() calls app.invoke(). LangSmith opens a trace.",
-      anims: [{ e: "q_in", label: "question" }, { e: "invoke", d: 900 }, { e: "start_cls", d: 1400 }],
-      on: ["customer", "ask", "start"],
+      anims: [{ e: "q_in", label: "question" }, { e: "invoke", d: 900 }, { e: "start_cls", d: 1400 }, SEND("start")],
+      on: ["customer", "ask", "start", "ls"], key: "root", running: ["root"],
+      sent: "LangGraph started",
       rows: [{ d: 0, n: "LangGraph", o: cfg.q }] },
     { title: "classify_intent", text: "The supervisor's LLM call is recorded: prompt, model, output.",
-      decision: "intent: " + cfg.intent, on: ["cls"],
+      decision: "intent: " + cfg.intent, on: ["cls", "ls"], key: "cls", running: ["root", "cls"],
+      anims: [SEND("start/end")],
+      sent: "classify_intent started; its LLM call started and finished",
       rows: [{ d: 1, n: "classify_intent" }].concat(llmChain('"' + cfg.intent + '"')) },
     { title: "route_by_intent", text: "The routing decision is recorded inside classify_intent.",
       decision: "intent: " + cfg.intent + " -> " + cfg.agent,
-      anims: [{ e: "cls_route" }, { e: ag.route, d: 700, label: cfg.agent }], on: ["route", ag.id],
+      anims: [{ e: "cls_route" }, { e: ag.route, d: 700, label: cfg.agent }, SEND("end")], on: ["route", ag.id, "ls"],
+      key: "route", running: ["root"],
+      sent: "route_by_intent started and finished; classify_intent finished",
       rows: [{ d: 2, n: "route_by_intent", o: '"' + cfg.agent + '"' }] },
-    { title: cfg.agent, text: cfg.agentText, anims: cfg.agentAnims || [], on: [ag.id].concat(cfg.agentOn),
+    { title: cfg.agent, text: cfg.agentText, anims: (cfg.agentAnims || []).concat([SEND("start/end")]),
+      on: [ag.id, "ls"].concat(cfg.agentOn), key: "agent", running: ["root"],
+      sent: cfg.agent + " started; each run inside it started and finished; " + cfg.agent + " finished",
       rows: [{ d: 1, n: cfg.agent }].concat(cfg.agentRows) },
-    { title: "END", text: "The answer goes back. The trace is uploaded to LangSmith in the background.",
-      anims: [{ e: ag.end, label: "final state" }, { e: "end_cust", d: 1100, label: cfg.short }, { e: "upload", d: 1100, label: "trace", wait: true }],
-      on: ["end", "customer", "ask", "ls"], rows: [],
+    { title: "END", text: "The answer goes back. Only the last update is sent now: everything else is already in LangSmith.",
+      anims: [{ e: ag.end, label: "final state" }, { e: "end_cust", d: 1100, label: cfg.short }, { e: "upload", d: 1100, label: "finished", wait: true }],
+      on: ["end", "customer", "ask", "ls"], rows: [], running: [],
+      sent: "LangGraph finished (the trace is complete)",
       missing: "not in this trace: " + others.join(", ") + " (they never ran)" },
   ];
   const steps = [];
   let groups = [];
   for (const p of parts) {
-    if (p.rows.length) groups = groups.concat([{ rows: p.rows }]);
+    if (p.rows.length) groups = groups.concat([{ rows: p.rows, key: p.key }]);
     const trace = [];
-    for (const g of groups) trace.push({ rows: g.rows, tag: g.rows === p.rows ? "new" : "" });
+    for (const g of groups) {
+      trace.push({ rows: g.rows, tag: g.rows === p.rows ? "new" : "", running: p.running.includes(g.key) });
+    }
     steps.push(Object.assign({}, p, { trace }));
   }
   return { name: cfg.name, query: cfg.q, steps };
@@ -340,6 +360,7 @@ function render(live) {
   document.getElementById("stepno").textContent = `${S.name}  |  step ${step + 1} of ${S.steps.length}`;
   document.getElementById("title").textContent = s.title;
   document.getElementById("text").textContent = s.text;
+  document.getElementById("sent").textContent = "Sent to LangSmith now: " + s.sent;
 
   const tr = document.getElementById("trace");
   tr.replaceChildren();
@@ -352,6 +373,9 @@ function render(live) {
       if (row.cls) name.className = row.cls;
       n.append("  ".repeat(row.d), name);
       if (g.tag && row === g.rows[0]) n.appendChild(tagSpan(g.tag));
+      if (g.running && row === g.rows[0]) {
+        const r = document.createElement("span"); r.className = "tag run"; r.textContent = "RUNNING"; n.appendChild(r);
+      }
       const o = document.createElement("span"); o.className = "o"; o.textContent = row.o || "";
       li.append(n, o); tr.appendChild(li);
     }
