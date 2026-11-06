@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SecureBank Request Flow and LangSmith Trace</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* Layout: graph on the left, the step story + logs + trace on the right, controls underneath. */
+:root {
+  --bg: #f4f6f9;
+  --panel: #ffffff;
+  --ink: #172033;
+  --muted: #5d677a;
+  --line: #c3cad6;
+  --accent: #2563d6;
+  --wait: #c46a12;
+  --ok: #23845a;
+  --accent-soft: #dfe9fb;
+  --wait-soft: #fbeedd;
+  --bad: #c2362f;
+  --bad-soft: #fbe3e1;
+  --ok-soft: #dcf1e6;
+  --font-display: "IBM Plex Sans Condensed", "Arial Narrow", sans-serif;
+  --font-body: "IBM Plex Sans", "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", Consolas, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f141c; --panel: #161d28; --ink: #e5eaf2; --muted: #9aa6b8; --line: #364357;
+    --accent: #6ea2ff; --wait: #f0a35a; --ok: #4fbf85; --accent-soft: #1d2d4a; --wait-soft: #3a2a18;
+    --bad: #ff7b72; --bad-soft: #3d1f1f; --ok-soft: #173426;
+    color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--bg); color: var(--ink); font-family: var(--font-body); font-size: 15px; line-height: 1.45; }
+.wrap { max-width: 1440px; margin: 0 auto; padding: 18px 20px 28px; display: grid; gap: 14px; }
+header { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 12px; }
+h1 { font-family: var(--font-display); font-weight: 600; font-size: 28px; margin: 0; letter-spacing: 0.2px; }
+.sub { color: var(--muted); margin: 2px 0 0; }
+.tabs { display: flex; flex-wrap: wrap; gap: 6px; }
+.tab { font: 500 14px var(--font-body); color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 7px 14px; cursor: pointer; }
+.tab[aria-selected="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+.tab:focus-visible, .btn:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.stage { display: grid; grid-template-columns: minmax(0, 2.1fr) minmax(340px, 1fr); gap: 14px; align-items: start; }
+.graph { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 8px; overflow-x: auto; margin: 0; }
+.graph svg { display: block; width: 100%; min-width: 760px; height: auto; }
+.story { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; display: grid; gap: 12px; align-content: start; }
+.stepno { font: 500 13px var(--font-mono); color: var(--muted); display: flex; justify-content: space-between; gap: 8px; }
+.story h2 { font-family: var(--font-display); font-weight: 600; font-size: 22px; margin: 0; }
+.story p { margin: 0; }
+.panel h3 { font: 600 13px var(--font-body); text-transform: uppercase; letter-spacing: 0.6px; color: var(--muted); margin: 0 0 6px; }
+.trace ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 3px; }
+.trace li { font: 13.5px/1.5 var(--font-mono); padding: 2px 6px; border-radius: 5px; display: flex; gap: 10px; justify-content: space-between; }
+.trace li .n { white-space: pre; }
+.trace li .o { color: var(--muted); text-align: right; word-break: break-word; }
+.trace li .llm { color: var(--wait); font-weight: 500; }
+.trace li .ret { color: var(--accent); font-weight: 500; }
+.trace .missing { font: 12.5px var(--font-mono); color: var(--muted); margin-top: 6px; }
+li.new { background: var(--accent-soft); }
+.tag { font: 600 10px var(--font-body); letter-spacing: 0.5px; border-radius: 3px; padding: 1px 4px; margin-left: 6px; vertical-align: 1px; color: #fff; }
+li.new .tag { background: var(--accent); }
+.controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.btn { font: 600 14px var(--font-body); color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 7px; padding: 8px 16px; cursor: pointer; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn:disabled { opacity: 0.45; cursor: default; }
+.dots { display: flex; gap: 6px; flex-wrap: wrap; }
+.dot { width: 22px; height: 6px; border-radius: 3px; background: var(--line); border: 0; padding: 0; cursor: pointer; }
+.dot.on { background: var(--accent); }
+.hint { color: var(--muted); font-size: 13px; margin-left: auto; }
+
+/* SVG graph */
+.g-node rect, .g-node circle { fill: var(--panel); stroke: var(--line); stroke-width: 1.5; transition: stroke 0.25s, fill 0.25s; }
+.g-node text { fill: var(--ink); font-family: var(--font-body); font-size: 15px; font-weight: 600; text-anchor: middle; }
+.g-node text.s { fill: var(--muted); font-size: 12.5px; font-weight: 400; }
+.g-node text.m { font-family: var(--font-mono); font-weight: 400; font-size: 11.5px; fill: var(--muted); }
+.g-node.sub > rect { fill: var(--bg); }
+.g-node.active > rect, .g-node.active > circle { stroke: var(--accent); stroke-width: 3; }
+.g-node.ls > rect { stroke: var(--wait); stroke-dasharray: 5 4; }
+.g-node.ls.active > rect { stroke: var(--wait); stroke-dasharray: 0; fill: var(--wait-soft); }
+.frame { fill: none; stroke: var(--wait); stroke-width: 1.2; stroke-dasharray: 4 4; }
+.frame-label { fill: var(--wait); font: 600 12px var(--font-body); letter-spacing: 0.8px; }
+.edge { fill: none; stroke: var(--line); stroke-width: 2; marker-end: url(#arrow); transition: stroke 0.25s; }
+.edge.lit { stroke: var(--accent); stroke-width: 2.6; marker-end: url(#arrow-lit); }
+.edge.int { stroke-dasharray: 6 5; }
+.edge.int.lit { stroke: var(--wait); marker-end: url(#arrow-wait); }
+.elabel { fill: var(--muted); font: 11px var(--font-mono); text-anchor: middle; }
+.decision rect { fill: var(--accent-soft); stroke: var(--accent); }
+.decision text { fill: var(--ink); font: 500 12px var(--font-body); text-anchor: middle; }
+.packet circle { fill: var(--accent); stroke: var(--panel); stroke-width: 2; }
+.packet.wait circle { fill: var(--wait); }
+.packet rect { fill: var(--ink); }
+.packet text { fill: var(--panel); font: 500 11px var(--font-mono); text-anchor: middle; }
+@media (max-width: 1000px) { .stage { grid-template-columns: 1fr; } }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>SecureBank Request Flow and its LangSmith Trace</h1>
+      <p class="sub">Follow one question from START to END. On the right: what LangSmith has recorded so far. Sample values.</p>
+    </div>
+    <div class="tabs" role="tablist" aria-label="Scenario" id="tabs"></div>
+  </header>
+
+  <div class="stage">
+    <figure class="graph">
+      <svg id="svg" viewBox="0 0 1100 610" role="img" aria-label="SecureBank graph: the customer's question goes through ask() into START, then classify_intent, then route_by_intent picks one of policy_agent, account_agent or escalation_agent, then END. The whole run is recorded as one trace and uploaded to LangSmith.">
+        <defs>
+          <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#8f99aa"/></marker>
+          <marker id="arrow-lit" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2563d6"/></marker>
+          <marker id="arrow-wait" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#c46a12"/></marker>
+        </defs>
+
+        <rect class="frame" x="318" y="30" width="770" height="450" rx="10"/>
+        <text class="frame-label" x="336" y="54">ONE TRACE = ONE app.invoke()   (LANGCHAIN_TRACING_V2=true)</text>
+
+        <!-- edges -->
+        <path class="edge" id="e-q_in" d="M140,295 L180,295"/>
+        <path class="edge" id="e-invoke" d="M300,295 L320,295"/>
+        <path class="edge" id="e-start_cls" d="M358,295 L380,295"/>
+        <path class="edge" id="e-cls_route" d="M540,295 L580,295"/>
+        <path class="edge" id="e-route_pol" d="M700,285 C722,285 716,140 740,140"/>
+        <path class="edge" id="e-route_acc" d="M700,295 L740,295"/>
+        <path class="edge" id="e-route_esc" d="M700,305 C722,305 716,415 740,415"/>
+        <path class="edge" id="e-pol_ret_llm" d="M862,150 L878,150"/>
+        <path class="edge" id="e-acc_db_llm" d="M862,308 L878,308"/>
+        <path class="edge" id="e-pol_end" d="M1000,140 C1040,140 1054,220 1056,279"/>
+        <path class="edge" id="e-acc_end" d="M1000,295 L1044,295"/>
+        <path class="edge" id="e-esc_end" d="M1000,415 C1036,415 1046,360 1050,312"/>
+        <path class="edge" id="e-end_cust" d="M1080,295 L1094,295 L1094,595 L80,595 L80,335"/>
+        <path class="edge int" id="e-upload" d="M1066,313 L1066,530 L686,530"/>
+        <text class="elabel" x="586" y="588">result goes back to the caller</text>
+        <text class="elabel" x="878" y="522">runs uploaded in a background thread</text>
+
+        <!-- caller side -->
+        <g class="g-node" id="n-customer"><rect x="20" y="255" width="120" height="80" rx="8"/><text x="80" y="290">Customer</text><text class="s" x="80" y="308">asks a question</text></g>
+        <g class="g-node" id="n-ask"><rect x="180" y="255" width="120" height="80" rx="8"/><text x="240" y="290">ask()</text><text class="m" x="240" y="308">app.invoke()</text></g>
+        <g class="g-node" id="n-start"><circle cx="340" cy="295" r="18"/><text x="340" y="299" style="font-size:9.5px">START</text></g>
+
+        <!-- supervisor + router -->
+        <g class="g-node" id="n-cls"><rect x="380" y="250" width="160" height="90" rx="8"/><text x="460" y="283">classify_intent</text><text class="s" x="460" y="301">supervisor</text><text class="m" x="460" y="320">1 LLM call</text></g>
+        <g class="decision" id="decision" visibility="hidden"><rect id="decision-bg" x="380" y="210" width="160" height="26" rx="13"/><text id="decision-text" x="460" y="227"></text></g>
+        <g class="g-node" id="n-route"><rect x="580" y="272" width="120" height="46" rx="23"/><text x="640" y="300" style="font-size:12.5px">route_by_intent</text></g>
+
+        <!-- policy agent -->
+        <g class="g-node" id="n-pol"><rect x="740" y="72" width="260" height="146" rx="10"/><text x="870" y="96">policy_agent</text><text class="s" x="870" y="112">RAG over policy documents</text></g>
+        <g class="g-node sub" id="n-pol_ret"><rect x="752" y="124" width="110" height="56" rx="6"/><text x="807" y="149" style="font-size:13px">retriever</text><text class="m" x="807" y="167">Chroma, k=3</text></g>
+        <g class="g-node sub" id="n-pol_llm"><rect x="878" y="124" width="110" height="56" rx="6"/><text x="933" y="149" style="font-size:13px">LLM</text><text class="m" x="933" y="167">ChatOpenAI</text></g>
+
+        <!-- account agent -->
+        <g class="g-node" id="n-acc"><rect x="740" y="236" width="260" height="114" rx="10"/><text x="870" y="258">account_agent</text><text class="s" x="870" y="273">mock database lookup</text></g>
+        <g class="g-node sub" id="n-acc_db"><rect x="752" y="282" width="110" height="56" rx="6"/><text x="807" y="306" style="font-size:13px">mock DB</text><text class="m" x="807" y="324">regex + dict</text></g>
+        <g class="g-node sub" id="n-acc_llm"><rect x="878" y="282" width="110" height="56" rx="6"/><text x="933" y="306" style="font-size:13px">LLM</text><text class="m" x="933" y="324">ChatOpenAI</text></g>
+
+        <!-- escalation agent -->
+        <g class="g-node" id="n-esc"><rect x="740" y="368" width="260" height="96" rx="10"/><text x="870" y="389">escalation_agent</text></g>
+        <g class="g-node sub" id="n-esc_llm"><rect x="815" y="400" width="110" height="52" rx="6"/><text x="870" y="422" style="font-size:13px">LLM</text><text class="m" x="870" y="439">no retrieval</text></g>
+
+        <g class="g-node" id="n-end"><circle cx="1062" cy="295" r="18"/><text x="1062" y="299" style="font-size:9.5px">END</text></g>
+
+        <!-- LangSmith -->
+        <g class="g-node ls" id="n-ls"><rect x="400" y="500" width="284" height="62" rx="8"/><text x="542" y="526">LangSmith</text><text class="m" x="542" y="546">project: fintech-support-agent</text></g>
+
+        <g class="packets"></g>
+      </svg>
+    </figure>
+
+    <section class="story" aria-live="polite">
+      <div class="stepno" id="stepno"></div>
+      <h2 id="title"></h2>
+      <p id="text"></p>
+      <div class="panel trace"><h3>LangSmith trace</h3><ul id="trace"></ul><div class="missing" id="missing"></div></div>
+    </section>
+  </div>
+
+  <div class="controls">
+    <button class="btn" id="prev" type="button">Previous</button>
+    <button class="btn primary" id="next" type="button">Next</button>
+    <button class="btn" id="play" type="button">Play</button>
+    <button class="btn" id="restart" type="button">Restart</button>
+    <div class="dots" id="dots" aria-label="Steps"></div>
+    <span class="hint">Keys: right arrow or space = next, left arrow = back, 1 to 3 = scenario</span>
+  </div>
+</div>
+
+<script>
+// ---- Data -------------------------------------------------------------------
+// Trace rows match the run tree recorded from project/fintech_support_agent.py.
+const AGENTS = {
+  policy_agent:     { id: "pol", route: "route_pol", end: "pol_end" },
+  account_agent:    { id: "acc", route: "route_acc", end: "acc_end" },
+  escalation_agent: { id: "esc", route: "route_esc", end: "esc_end" },
+};
+
+function llmChain(out) {   // prompt | llm | StrOutputParser, as LangSmith shows it
+  return [
+    { d: 2, n: "RunnableSequence" },
+    { d: 3, n: "ChatPromptTemplate" },
+    { d: 3, n: "ChatOpenAI", o: out, cls: "llm" },
+    { d: 3, n: "StrOutputParser" },
+  ];
+}
+
+// One scenario = 5 steps. Each step adds runs to the trace; the new ones are tagged NEW.
+function scenario(cfg) {
+  const ag = AGENTS[cfg.agent];
+  const others = Object.keys(AGENTS).filter(a => a !== cfg.agent);
+  const parts = [
+    { title: "The customer asks", text: "ask() calls app.invoke(). LangSmith opens a trace.",
+      anims: [{ e: "q_in", label: "question" }, { e: "invoke", d: 900 }, { e: "start_cls", d: 1400 }],
+      on: ["customer", "ask", "start"],
+      rows: [{ d: 0, n: "LangGraph", o: cfg.q }] },
+    { title: "classify_intent", text: "The supervisor's LLM call is recorded: prompt, model, output.",
+      decision: "intent: " + cfg.intent, on: ["cls"],
+      rows: [{ d: 1, n: "classify_intent" }].concat(llmChain('"' + cfg.intent + '"')) },
+    { title: "route_by_intent", text: "The routing decision is recorded inside classify_intent.",
+      decision: "intent: " + cfg.intent + " -> " + cfg.agent,
+      anims: [{ e: "cls_route" }, { e: ag.route, d: 700, label: cfg.agent }], on: ["route", ag.id],
+      rows: [{ d: 2, n: "route_by_intent", o: '"' + cfg.agent + '"' }] },
+    { title: cfg.agent, text: cfg.agentText, anims: cfg.agentAnims || [], on: [ag.id].concat(cfg.agentOn),
+      rows: [{ d: 1, n: cfg.agent }].concat(cfg.agentRows) },
+    { title: "END", text: "The answer goes back. The trace is uploaded to LangSmith in the background.",
+      anims: [{ e: ag.end, label: "final state" }, { e: "end_cust", d: 1100, label: cfg.short }, { e: "upload", d: 1100, label: "trace", wait: true }],
+      on: ["end", "customer", "ask", "ls"], rows: [],
+      missing: "not in this trace: " + others.join(", ") + " (they never ran)" },
+  ];
+  const steps = [];
+  let groups = [];
+  for (const p of parts) {
+    if (p.rows.length) groups = groups.concat([{ rows: p.rows }]);
+    const trace = [];
+    for (const g of groups) trace.push({ rows: g.rows, tag: g.rows === p.rows ? "new" : "" });
+    steps.push(Object.assign({}, p, { trace }));
+  }
+  return { name: cfg.name, query: cfg.q, steps };
+}
+
+const SCENARIOS = [
+  scenario({ name: "1. Policy question", q: "What is the overdraft fee?", intent: "policy", agent: "policy_agent", short: "$35",
+    agentText: "Two runs: the retriever (which chunks came back) and the LLM (the answer).",
+    agentAnims: [{ e: "pol_ret_llm", label: "context" }], agentOn: ["pol_ret", "pol_llm"],
+    agentRows: [{ d: 2, n: "VectorStoreRetriever", o: '3 chunks from account_fees.md', cls: "ret" }]
+      .concat(llmChain('"The overdraft fee is $35 ..."')) }),
+  scenario({ name: "2. Account question", q: "What is the balance on ACC-12345?", intent: "account_status", agent: "account_agent", short: "$12,450.75",
+    agentText: "The regex and dict lookup are plain Python, so they are not runs. Only the LLM call is.",
+    agentAnims: [{ e: "acc_db_llm", label: "account JSON" }], agentOn: ["acc_db", "acc_llm"],
+    agentRows: llmChain('"Your balance is $12,450.75 ..."') }),
+  scenario({ name: "3. Complaint", q: "I'm furious! Someone stole money!", intent: "escalation", agent: "escalation_agent", short: "apology",
+    agentText: "One LLM call, no retrieval.",
+    agentOn: ["esc_llm"],
+    agentRows: llmChain('"I\'m sorry ... a specialist will ..."') }),
+];
+
+// ---- Rendering --------------------------------------------------------------
+const TAGS = { new: "NEW" };
+const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+let sc = 0, step = 0, runId = 0, playTimer = null;
+
+function el(tag, attrs, parent) {
+  const n = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  for (const a in attrs) n.setAttribute(a, attrs[a]);
+  if (parent) parent.appendChild(n);
+  return n;
+}
+
+function makePacket(parent, label, wait) {
+  const g = el("g", { class: "packet" + (wait ? " wait" : "") }, parent);
+  el("circle", { r: 8 }, g);
+  if (label) {
+    const w = label.length * 6.7 + 12;
+    el("rect", { x: -w / 2, y: -30, width: w, height: 18, rx: 4 }, g);
+    const t = el("text", { x: 0, y: -17 }, g);
+    t.textContent = label;
+  }
+  return g;
+}
+
+function place(g, path, frac) {
+  const p = path.getPointAtLength(Math.max(0, Math.min(1, frac)) * path.getTotalLength());
+  g.setAttribute("transform", `translate(${p.x},${p.y})`);
+}
+
+function animate(anim, parent, myRun, live) {
+  const path = document.getElementById("e-" + anim.e);
+  const g = makePacket(parent, anim.label, anim.wait);
+  if (!live) { place(g, path, 1); return; }
+  place(g, path, 0);
+  g.style.visibility = "hidden";
+  setTimeout(() => {
+    if (myRun !== runId) return;
+    g.style.visibility = "visible";
+    const t0 = performance.now();
+    function tick(now) {
+      if (myRun !== runId) return;
+      let k = Math.min(1, (now - t0) / 1100);
+      k = k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;   // ease in-out
+      place(g, path, k);
+      if (k < 1) requestAnimationFrame(tick);
+    }
+    requestAnimationFrame(tick);
+  }, anim.d || 0);
+}
+
+function tagSpan(tag) {
+  const t = document.createElement("span"); t.className = "tag"; t.textContent = TAGS[tag]; return t;
+}
+
+function render(live) {
+  runId++;
+  const S = SCENARIOS[sc], s = S.steps[step];
+  const svg = document.getElementById("svg");
+  svg.querySelectorAll('.g-node[id^="n-"]').forEach(n => {
+    const id = n.id.slice(2);
+    n.classList.toggle("active", (s.on || []).includes(id));
+  });
+  const used = new Set((s.anims || []).map(a => a.e));
+  svg.querySelectorAll(".edge").forEach(p => p.classList.toggle("lit", used.has(p.id.slice(2))));
+  const dec = document.getElementById("decision");
+  if (s.decision) {
+    const t = document.getElementById("decision-text");
+    t.textContent = s.decision;
+    const w = s.decision.length * 6.6 + 28, r = document.getElementById("decision-bg");
+    r.setAttribute("width", w); r.setAttribute("x", 460 - w / 2);
+    dec.setAttribute("visibility", "visible");
+  } else dec.setAttribute("visibility", "hidden");
+  const packetsG = svg.querySelector(".packets");
+  packetsG.replaceChildren();
+  const myRun = runId;
+  (s.anims || []).forEach(a => animate(a, packetsG, myRun, live && !reduce));
+
+  // story
+  document.getElementById("stepno").textContent = `${S.name}  |  step ${step + 1} of ${S.steps.length}`;
+  document.getElementById("title").textContent = s.title;
+  document.getElementById("text").textContent = s.text;
+
+  const tr = document.getElementById("trace");
+  tr.replaceChildren();
+  for (const g of s.trace) {
+    for (const row of g.rows) {
+      const li = document.createElement("li");
+      if (g.tag) li.className = g.tag;
+      const n = document.createElement("span"); n.className = "n";
+      const name = document.createElement("span"); name.textContent = row.n;
+      if (row.cls) name.className = row.cls;
+      n.append("  ".repeat(row.d), name);
+      if (g.tag && row === g.rows[0]) n.appendChild(tagSpan(g.tag));
+      const o = document.createElement("span"); o.className = "o"; o.textContent = row.o || "";
+      li.append(n, o); tr.appendChild(li);
+    }
+  }
+  document.getElementById("missing").textContent = s.missing || "";
+
+  // controls
+  document.getElementById("prev").disabled = step === 0;
+  document.getElementById("next").disabled = step === S.steps.length - 1;
+  const dots = document.getElementById("dots");
+  dots.replaceChildren();
+  S.steps.forEach((_, i) => {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "dot" + (i <= step ? " on" : "");
+    b.setAttribute("aria-label", `Step ${i + 1}`);
+    b.addEventListener("click", () => { stopPlay(); step = i; render(true); });
+    dots.appendChild(b);
+  });
+  document.querySelectorAll(".tab").forEach((t, i) => t.setAttribute("aria-selected", i === sc ? "true" : "false"));
+}
+
+function next() { if (step < SCENARIOS[sc].steps.length - 1) { step++; render(true); } else stopPlay(); }
+function prev() { stopPlay(); if (step > 0) { step--; render(false); } }
+function setScenario(i) { stopPlay(); sc = i; step = 0; render(true); }
+function stopPlay() { if (playTimer) { clearInterval(playTimer); playTimer = null; document.getElementById("play").textContent = "Play"; } }
+function togglePlay() {
+  if (playTimer) return stopPlay();
+  document.getElementById("play").textContent = "Pause";
+  if (step === SCENARIOS[sc].steps.length - 1) { step = 0; render(true); }
+  playTimer = setInterval(next, 3600);
+}
+
+// tabs
+const tabs = document.getElementById("tabs");
+SCENARIOS.forEach((S, i) => {
+  const b = document.createElement("button");
+  b.type = "button"; b.className = "tab"; b.setAttribute("role", "tab");
+  b.textContent = S.name; b.title = S.query;
+  b.addEventListener("click", () => setScenario(i));
+  tabs.appendChild(b);
+});
+document.getElementById("next").addEventListener("click", () => { stopPlay(); next(); });
+document.getElementById("prev").addEventListener("click", prev);
+document.getElementById("restart").addEventListener("click", () => { stopPlay(); step = 0; render(true); });
+document.getElementById("play").addEventListener("click", togglePlay);
+document.addEventListener("keydown", e => {
+  if (e.target.closest && e.target.closest("button") && (e.key === " " || e.key === "Enter")) return;
+  if (e.key === "ArrowRight" || e.key === " ") { e.preventDefault(); stopPlay(); next(); }
+  else if (e.key === "ArrowLeft") { e.preventDefault(); prev(); }
+  else if (["1", "2", "3"].includes(e.key)) setScenario(Number(e.key) - 1);
+});
+
+// open a given tab and step from the URL, e.g. fintech_05_graph_and_traces.html#1.4
+const m = location.hash.match(/^#(\d)(?:\.(\d+))?$/);
+if (m) { sc = Math.min(Number(m[1]), SCENARIOS.length) - 1; step = Math.min(Number(m[2] || 1), SCENARIOS[sc].steps.length) - 1; }
+render(false);
+</script>
+</body>
+</html>

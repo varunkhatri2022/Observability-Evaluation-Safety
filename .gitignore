@@ -1,0 +1,18 @@
+# Secrets: never commit API keys
+.env
+.guardrailsrc
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Generated at runtime
+chroma_db/
+.deepeval/
+audit_log*.jsonl
+batch_input.jsonl
+*.log
+
+# Duplicate of the class slides at the top level
+/fintech-agent-observability-evaluation/Week 8 _ Agent Observability, Evaluation & Safety.pdf
